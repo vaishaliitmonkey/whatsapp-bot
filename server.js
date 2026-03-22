@@ -13,12 +13,10 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbyDhXlZuupN5RNcj63WcG
 
 const users = {};
 
-// 🔹 Delay function (IMPORTANT)
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+// 🔹 delay
+const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// 🔹 Webhook verify
+// 🔹 webhook verify
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -26,7 +24,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// 🔹 Receive messages
+// 🔹 main webhook
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -53,19 +51,19 @@ app.post("/webhook", async (req, res) => {
             const name = text.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
             users[from].name = name;
 
-            await sendServiceList(from, `Nice to meet you ${name} 😊\nChoose a service 👇`);
+            await sendDynamicServiceList(from, `Nice to meet you ${name} 😊\nChoose a service 👇`);
             users[from].step = 3;
         }
 
         // STEP 3
         else if (users[from].step === 3) {
-            users[from].service = (replyId || text || "").toLowerCase();
+            users[from].service = replyId;
 
             await sendYesNo(from, "Would you like to see sample work? 👀");
             users[from].step = 3.5;
         }
 
-        // STEP 3.5 (DYNAMIC)
+        // STEP 3.5
         else if (users[from].step === 3.5) {
             const answer = (replyId || text || "").toLowerCase();
 
@@ -73,28 +71,21 @@ app.post("/webhook", async (req, res) => {
 
                 const services = await getServices();
 
-                const matched = services.filter(s =>
-                    users[from].service.includes((s.service || "").toLowerCase())
-                );
+                const matched = services.filter(s => s.service === users[from].service);
 
                 console.log("MATCHED:", matched);
 
-                if (matched.length === 0) {
-                    await sendText(from, "No samples available right now.");
-                }
-
                 for (let item of matched) {
-
                     const type = (item.type || "").toLowerCase();
 
                     if (type === "image") {
                         await sendImage(from, item.content);
-                        await delay(1000); // 🔥 IMPORTANT
+                        await delay(1000);
                     }
 
                     if (type === "link") {
                         await sendText(from, item.content);
-                        await delay(1000); // 🔥 IMPORTANT
+                        await delay(1000);
                     }
                 }
 
@@ -139,12 +130,9 @@ app.post("/webhook", async (req, res) => {
 
 Your request has been successfully received ✅  
 
-Our team will connect with you shortly on your provided contact details 📞  
+Our team will connect with you shortly 📞  
 
-If it’s urgent, feel free to call us directly at:  
-📲 *8504852601*  
-
-We’re excited to work with you! 🚀✨`
+📲 8504852601`
             );
 
             users[from].step = 1;
@@ -159,6 +147,57 @@ We’re excited to work with you! 🚀✨`
 
 // ================= FUNCTIONS =================
 
+// 🔹 fetch services
+async function getServices() {
+    const res = await axios.get(`${SHEET_URL}?type=services`);
+    const rows = res.data;
+    const headers = rows[0];
+
+    return rows.slice(1).map(row => {
+        let obj = {};
+        headers.forEach((h, i) => obj[h] = row[i]);
+        return obj;
+    });
+}
+
+// 🔹 dynamic service list
+async function sendDynamicServiceList(to, text) {
+    const services = await getServices();
+
+    const unique = {};
+    services.forEach(s => {
+        unique[s.service] = s.title;
+    });
+
+    const rows = Object.keys(unique).map(key => ({
+        id: key,
+        title: unique[key].substring(0, 24)
+    }));
+
+    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+            type: "list",
+            body: { text },
+            action: {
+                button: "Select Service",
+                sections: [{
+                    title: "Services",
+                    rows
+                }]
+            }
+        }
+    }, {
+        headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            "Content-Type": "application/json"
+        }
+    });
+}
+
+// 🔹 send text
 async function sendText(to, text) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
@@ -172,6 +211,7 @@ async function sendText(to, text) {
     });
 }
 
+// 🔹 send image
 async function sendImage(to, url) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
@@ -186,38 +226,7 @@ async function sendImage(to, url) {
     });
 }
 
-async function sendServiceList(to, text) {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
-        messaging_product: "whatsapp",
-        to,
-        type: "interactive",
-        interactive: {
-            type: "list",
-            body: { text },
-            action: {
-                button: "Select Service",
-                sections: [{
-                    title: "Services",
-                    rows: [
-                        { id: "social_media", title: "Social Media 🚀" },
-                        { id: "digital_marketing", title: "Digital Marketing 📈" },
-                        { id: "shoot", title: "Content Shoot 🎬" },
-                        { id: "consulting", title: "Consulting 💡" },
-                        { id: "automation", title: "Automation 🤖" },
-                        { id: "design", title: "Graphic Design 🎨" },
-                        { id: "other", title: "Other 🔧" }
-                    ]
-                }]
-            }
-        }
-    }, {
-        headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json"
-        }
-    });
-}
-
+// 🔹 yes/no
 async function sendYesNo(to, text) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
@@ -228,8 +237,8 @@ async function sendYesNo(to, text) {
             body: { text },
             action: {
                 buttons: [
-                    { type: "reply", reply: { id: "yes", title: "Yes ✅" } },
-                    { type: "reply", reply: { id: "no", title: "No ❌" } }
+                    { type: "reply", reply: { id: "yes", title: "Yes" } },
+                    { type: "reply", reply: { id: "no", title: "No" } }
                 ]
             }
         }
@@ -241,25 +250,12 @@ async function sendYesNo(to, text) {
     });
 }
 
-// 🔹 GET SERVICES FROM SHEET
-async function getServices() {
-    const res = await axios.get(`${SHEET_URL}?type=services`);
-    const rows = res.data;
-    const headers = rows[0];
-
-    return rows.slice(1).map(row => {
-        let obj = {};
-        headers.forEach((h, i) => obj[h] = row[i]);
-        return obj;
-    });
-}
-
-// 🔹 SAVE
+// 🔹 save lead
 async function saveToSheet(data) {
     await axios.post(SHEET_URL, data);
 }
 
-// 🔹 NOTIFY
+// 🔹 notify
 async function notifyOwner(data) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
