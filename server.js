@@ -18,7 +18,7 @@ const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
 const users = {};
 
-// VERIFY
+// ===== VERIFY =====
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -26,7 +26,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// MAIN
+// ===== MAIN =====
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -49,18 +49,21 @@ app.post("/webhook", async (req, res) => {
         const services = raw.services || [];
         const config = raw.config || [];
 
-        // ===== FLOW =====
+        // ===== FLOW CLEAN =====
         const flowData = flow.slice(1).map(r => ({
-            step: r[0],
-            type: r[1],
-            message: r[2],
-            options: r[3],
-            next: r[4]
+            step: (r[0] || "").toString().trim(),
+            type: (r[1] || "").toString().trim(),
+            message: (r[2] || "").toString().trim(),
+            options: (r[3] || "").toString().trim(),
+            next: (r[4] || "").toString().trim()
         }));
 
         // ===== CONFIG =====
         const configObj = {};
-        config.slice(1).forEach(r => configObj[r[0]] = r[1]);
+        config.slice(1).forEach(r => {
+            configObj[(r[0] || "").toString().trim()] =
+                (r[1] || "").toString().trim();
+        });
 
         // ===== USER INIT =====
         if (!users[from]) users[from] = { step: "start" };
@@ -77,24 +80,31 @@ app.post("/webhook", async (req, res) => {
 
         if (!stepData) {
             users[from].step = "start";
+            step = "start";
             stepData = flowData.find(s => s.step === "start");
         }
 
-        // ===== SAVE INPUT =====
+        // ===== NAME =====
         if (step === "name") {
             users[from].name = text;
             users[from].step = "service";
+
+            step = users[from].step;
+            stepData = flowData.find(s => s.step === step);
         }
 
-        if (step === "service") {
-            users[from].service = replyId || text;
+        // ===== SERVICE =====
+        if (step === "service" && replyId) {
+            users[from].service = replyId;
         }
 
+        // ===== CONTACT =====
         if (step === "contact") {
             users[from].sameNumber = replyId || text;
         }
 
-        let msg = (stepData.message || "").replace("{{name}}", users[from].name || "");
+        let msg = (stepData.message || "")
+            .replace("{{name}}", users[from].name || "");
 
         // ===== TEXT =====
         if (stepData.type === "text") {
@@ -108,18 +118,11 @@ app.post("/webhook", async (req, res) => {
 
             if (stepData.step === "service") {
 
-                let serviceNames = [];
+                let serviceNames = services.slice(1).map(r =>
+                    (r[0] || "").toString().trim()
+                ).filter(Boolean);
 
-                if (Array.isArray(services)) {
-
-                    serviceNames = services.slice(1).map(r => {
-                        if (Array.isArray(r)) return r[0];
-                        if (typeof r === "object") return r.service;
-                        return null;
-                    }).filter(Boolean);
-
-                    serviceNames = [...new Set(serviceNames)];
-                }
+                serviceNames = [...new Set(serviceNames)];
 
                 console.log("SERVICES:", serviceNames);
 
@@ -140,20 +143,19 @@ app.post("/webhook", async (req, res) => {
             await sendButtons(from, msg, opts);
         }
 
-        // ===== ACTION =====
+        // ===== SAMPLE ACTION =====
         if (stepData.type === "action") {
 
             const selected = users[from].service;
 
-            const filtered = services.slice(1).filter(r => {
-                if (Array.isArray(r)) return r[0] === selected;
-                if (typeof r === "object") return r.service === selected;
-                return false;
-            });
+            const filtered = services.slice(1).filter(r =>
+                (r[0] || "").toString().trim() === selected
+            );
 
             for (let row of filtered) {
-                let type = Array.isArray(row) ? row[2] : row.type;
-                let content = Array.isArray(row) ? row[3] : row.content;
+
+                const type = (row[2] || "").toString().trim();
+                const content = (row[3] || "").toString().trim();
 
                 if (type === "image") {
                     await sendImage(from, content);
@@ -163,7 +165,7 @@ app.post("/webhook", async (req, res) => {
             }
         }
 
-        // ===== NEXT =====
+        // ===== MOVE NEXT =====
         if (step !== "name") {
             users[from].step = stepData.next;
         }
@@ -171,9 +173,12 @@ app.post("/webhook", async (req, res) => {
         let next = flowData.find(s => s.step === users[from].step);
 
         if (next) {
-            let nextMsg = (next.message || "").replace("{{name}}", users[from].name || "");
+            let nextMsg = (next.message || "")
+                .replace("{{name}}", users[from].name || "");
 
-            if (next.type === "text") await sendText(from, nextMsg);
+            if (next.type === "text") {
+                await sendText(from, nextMsg);
+            }
 
             if (next.type === "button") {
                 let opts = next.options
