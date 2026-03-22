@@ -7,10 +7,12 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = "mytoken123";
 
-// 🔑 IMPORTANT
-const TOKEN = "YOUR_PERMANENT_TOKEN";
-const PHONE_NUMBER_ID = "YOUR_PHONE_NUMBER_ID";
-const SHEET_URL = "YOUR_GOOGLE_SCRIPT_URL";
+// ✅ YOUR REAL VALUES (ALREADY FILLED)
+const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
+
+const PHONE_NUMBER_ID = "1079760248545797";
+
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbwoWM4DoA2Qsk7Kbiy6zftXGNYAEYFbU9lplccaywh9xrFGy7VpR5YgWoqQkVXh1NFi/exec";
 
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
@@ -18,31 +20,31 @@ const users = {};
 
 // 🔹 VERIFY WEBHOOK
 app.get("/webhook", (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-
-    if (mode && token === VERIFY_TOKEN) {
-        res.status(200).send(challenge);
-    } else {
-        res.sendStatus(403);
+    if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
+        return res.send(req.query["hub.challenge"]);
     }
+    res.sendStatus(403);
 });
 
-// 🔥 MAIN BOT
+// 🔹 MAIN BOT
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
         if (!message) return res.sendStatus(200);
 
         const from = message.from;
-        const text = message.text?.body?.toLowerCase();
+        const text = message.text?.body?.toLowerCase() || "";
 
-        // 🔹 Fetch sheet data
+        const replyId =
+            message.interactive?.button_reply?.id ||
+            message.interactive?.list_reply?.id;
+
+        // 🔹 Fetch data from sheet
         const sheetRes = await axios.get(SHEET_URL);
+
         const flow = sheetRes.data.flow;
         const services = sheetRes.data.services;
-        const config = sheetRes.data.config || [];
+        const config = sheetRes.data.config;
 
         const flowData = flow.slice(1).map(r => ({
             step: r[0],
@@ -52,62 +54,59 @@ app.post("/webhook", async (req, res) => {
             next: r[4]
         }));
 
-        // 🔹 Config
         const configObj = {};
         config.slice(1).forEach(r => configObj[r[0]] = r[1]);
 
-        // 🔹 Init user
         if (!users[from]) users[from] = { step: "start" };
 
         let currentStep = users[from].step;
         let stepData = flowData.find(s => s.step === currentStep);
 
-        // 🔹 Save data
+        // 🔹 Save user inputs
         if (currentStep === "name") users[from].name = text;
-        if (currentStep === "service") users[from].service = text;
-        if (currentStep === "contact") users[from].sameNumber = text;
+        if (currentStep === "service") users[from].service = replyId || text;
+        if (currentStep === "contact") users[from].sameNumber = replyId || text;
 
         // 🔹 Replace variables
         let msg = stepData.message || "";
         msg = msg.replace("{{name}}", users[from].name || "");
 
-        // 🔥 HANDLE TYPES
-
+        // 🔥 TEXT
         if (stepData.type === "text") {
             await sendText(from, msg);
         }
 
+        // 🔥 BUTTON
         if (stepData.type === "button") {
-            let opts = stepData.options.split(",").slice(0, 3);
+            let opts = (stepData.options || "").split(",").slice(0, 3);
             await sendButtons(from, msg, opts);
         }
 
-        // 🔥 ACTION → SEND SAMPLE
+        // 🔥 ACTION (SEND SAMPLE)
         if (stepData.type === "action") {
 
-            if (users[from].service) {
+            const selectedService = users[from].service?.toLowerCase();
 
-                const filtered = services.slice(1).filter(r =>
-                    r[0].toLowerCase() === users[from].service.toLowerCase()
-                );
+            const filtered = services.slice(1).filter(row =>
+                row[0].toLowerCase() === selectedService
+            );
 
-                for (let row of filtered) {
-                    const type = row[2];
-                    const content = row[3];
+            for (let row of filtered) {
+                const type = row[2];
+                const content = row[3];
 
-                    if (type === "image") {
-                        await sendImage(from, content);
-                    } else {
-                        await sendText(from, content);
-                    }
+                if (type === "image") {
+                    await sendImage(from, content);
+                } else {
+                    await sendText(from, content);
                 }
             }
         }
 
-        // 🔹 Move next
+        // 🔹 Move to next step
         users[from].step = stepData.next;
 
-        // 🔹 Next step auto
+        // 🔹 Next step auto send
         let nextStep = flowData.find(s => s.step === users[from].step);
 
         if (nextStep) {
@@ -119,12 +118,12 @@ app.post("/webhook", async (req, res) => {
             }
 
             if (nextStep.type === "button") {
-                let opts = nextStep.options.split(",").slice(0, 3);
+                let opts = (nextStep.options || "").split(",").slice(0, 3);
                 await sendButtons(from, nextMsg, opts);
             }
         }
 
-        // 🔥 SAVE LEAD + NOTIFY
+        // 🔥 SAVE + NOTIFY
         if (users[from].step === "end") {
 
             await axios.post(SHEET_URL, {
@@ -145,13 +144,13 @@ app.post("/webhook", async (req, res) => {
         }
 
     } catch (err) {
-        console.log("ERROR:", err.response?.data || err.message);
+        console.log("❌ ERROR:", err.response?.data || err.message);
     }
 
     res.sendStatus(200);
 });
 
-// 🔹 SEND TEXT
+// 🔹 TEXT
 async function sendText(to, message) {
     await axios.post(API_URL, {
         messaging_product: "whatsapp",
@@ -165,7 +164,7 @@ async function sendText(to, message) {
     });
 }
 
-// 🔹 BUTTONS
+// 🔹 BUTTON
 async function sendButtons(to, message, options) {
     const buttons = options.map(opt => ({
         type: "reply",
