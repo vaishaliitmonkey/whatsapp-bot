@@ -5,6 +5,7 @@ const axios = require("axios");
 const app = express();
 app.use(bodyParser.json());
 
+// ===== YOUR CONFIG =====
 const VERIFY_TOKEN = "mytoken123";
 
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
@@ -15,8 +16,11 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbzFn2eze-GAbxP0HEQQrQ
 
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
+// =======================
+
 const users = {};
 
+// VERIFY
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -24,20 +28,22 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
+// MAIN
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
         if (!message) return res.sendStatus(200);
 
         const from = message.from;
-        const text = message.text?.body?.toLowerCase() || "";
-
+        const text = message.text?.body?.toLowerCase().trim() || "";
         const replyId =
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
 
         const sheetRes = await axios.get(SHEET_URL);
-        let data = typeof sheetRes.data === "string" ? JSON.parse(sheetRes.data) : sheetRes.data;
+        const data = typeof sheetRes.data === "string"
+            ? JSON.parse(sheetRes.data)
+            : sheetRes.data;
 
         const flow = data.flow || [];
         const services = data.services || [];
@@ -56,15 +62,7 @@ app.post("/webhook", async (req, res) => {
 
         if (!users[from]) users[from] = { step: "start" };
 
-        // restart fix
-        if (
-            ["hi", "hello", "start"].includes(text) &&
-            users[from].step === "start"
-        ) {
-            await sendText(from, "Hey 👋 Welcome to IT Monkey!\nPlease enter your full name 😊");
-            return res.sendStatus(200);
-        }
-
+        // ===== RESET =====
         if (replyId === "start_over") {
             users[from] = { step: "start" };
             await sendText(from, "🔁 Restarted\nEnter your name 😊");
@@ -79,34 +77,53 @@ app.post("/webhook", async (req, res) => {
             stepData = flowData.find(s => s.step === "start");
         }
 
+        // ===== SAVE INPUT =====
         if (currentStep === "name") users[from].name = text;
-        if (currentStep === "service") users[from].service = (replyId || text || "").toLowerCase().trim();
+        if (currentStep === "service") users[from].service = (replyId || text).toLowerCase().trim();
         if (currentStep === "contact") users[from].sameNumber = replyId || text;
 
         let msg = (stepData.message || "").replace("{{name}}", users[from].name || "");
 
+        // ===== TEXT =====
         if (stepData.type === "text") {
             await sendText(from, msg);
         }
 
+        // ===== BUTTON =====
         if (stepData.type === "button") {
 
             let opts = [];
 
             if (stepData.step === "service") {
-                const uniqueServices = [...new Set(services.slice(1).map(r => r[0]))];
-                opts = uniqueServices;
+
+                // 🔥 FIXED SERVICE EXTRACTION
+                if (Array.isArray(services) && services.length > 1) {
+                    opts = [...new Set(
+                        services
+                            .slice(1)
+                            .map(r => r[0])
+                            .filter(s => s && s !== "service")
+                    )];
+                }
+
+                // fallback safety
+                if (opts.length === 0) {
+                    opts = ["social_media", "design", "automation"];
+                }
+
             } else {
                 opts = stepData.options
-                    ? stepData.options.split(",").filter(o => o.trim() !== "")
+                    ? stepData.options.split(",").map(o => o.trim())
                     : [];
             }
 
+            // always add restart
             opts.push("start_over");
 
             await sendButtons(from, msg, opts);
         }
 
+        // ===== SAMPLE ACTION =====
         if (stepData.type === "action") {
             const selectedService = users[from].service;
 
@@ -123,6 +140,7 @@ app.post("/webhook", async (req, res) => {
             }
         }
 
+        // ===== NEXT STEP =====
         users[from].step = stepData.next;
 
         let nextStep = flowData.find(s => s.step === users[from].step);
@@ -130,11 +148,13 @@ app.post("/webhook", async (req, res) => {
         if (nextStep) {
             let nextMsg = (nextStep.message || "").replace("{{name}}", users[from].name || "");
 
-            if (nextStep.type === "text") await sendText(from, nextMsg);
+            if (nextStep.type === "text") {
+                await sendText(from, nextMsg);
+            }
 
             if (nextStep.type === "button") {
                 let opts = nextStep.options
-                    ? nextStep.options.split(",").filter(o => o.trim() !== "")
+                    ? nextStep.options.split(",").map(o => o.trim())
                     : [];
 
                 opts.push("start_over");
@@ -143,7 +163,9 @@ app.post("/webhook", async (req, res) => {
             }
         }
 
+        // ===== SAVE LEAD =====
         if (users[from].step === "end") {
+
             await axios.post(SHEET_URL, {
                 name: users[from].name,
                 phone: from,
@@ -167,6 +189,8 @@ app.post("/webhook", async (req, res) => {
 
     res.sendStatus(200);
 });
+
+// ===== SENDERS =====
 
 async function sendText(to, message) {
     await axios.post(API_URL, {
