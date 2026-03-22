@@ -89,11 +89,11 @@ app.post("/webhook", async (req, res) => {
             users[from].name = text;
             users[from].step = "service";
 
-            step = users[from].step;
+            step = "service";
             stepData = flowData.find(s => s.step === step);
         }
 
-        // ===== SERVICE =====
+        // ===== SERVICE SELECT =====
         if (step === "service" && replyId) {
             users[from].service = replyId;
         }
@@ -111,33 +111,37 @@ app.post("/webhook", async (req, res) => {
             await sendText(from, msg);
         }
 
-        // ===== BUTTON =====
+        // ===== BUTTON / LIST =====
         if (stepData.type === "button") {
 
-            let opts = [];
-
+            // 🔥 SERVICE → LIST UI
             if (stepData.step === "service") {
 
-                let serviceNames = services.slice(1).map(r =>
-                    (r[0] || "").toString().trim()
-                ).filter(Boolean);
+                let serviceList = services.slice(1).map(r => ({
+                    id: (r[0] || "").toString().trim(),
+                    title: (r[1] || "").toString().trim()
+                })).filter(s => s.id);
 
-                serviceNames = [...new Set(serviceNames)];
+                console.log("SERVICES:", serviceList);
 
-                console.log("SERVICES:", serviceNames);
-
-                if (serviceNames.length === 0) {
-                    serviceNames = ["social_media", "design", "automation"];
+                if (serviceList.length === 0) {
+                    serviceList = [
+                        { id: "social_media", title: "Social Media" },
+                        { id: "design", title: "Design" },
+                        { id: "automation", title: "Automation" }
+                    ];
                 }
 
-                opts = serviceNames;
-
-            } else {
-                opts = stepData.options
-                    ? stepData.options.split(",").map(o => o.trim())
-                    : [];
+                await sendList(from, msg, serviceList);
+                return;
             }
 
+            // NORMAL BUTTONS (max 3)
+            let opts = stepData.options
+                ? stepData.options.split(",").map(o => o.trim())
+                : [];
+
+            opts = opts.slice(0, 2);
             opts.push("start_over");
 
             await sendButtons(from, msg, opts);
@@ -165,7 +169,7 @@ app.post("/webhook", async (req, res) => {
             }
         }
 
-        // ===== MOVE NEXT =====
+        // ===== NEXT =====
         if (step !== "name") {
             users[from].step = stepData.next;
         }
@@ -185,6 +189,7 @@ app.post("/webhook", async (req, res) => {
                     ? next.options.split(",").map(o => o.trim())
                     : [];
 
+                opts = opts.slice(0, 2);
                 opts.push("start_over");
 
                 await sendButtons(from, nextMsg, opts);
@@ -218,7 +223,7 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
 });
 
-// ===== SEND =====
+// ===== SEND FUNCTIONS =====
 
 async function sendText(to, message) {
     await axios.post(API_URL, {
@@ -243,6 +248,32 @@ async function sendButtons(to, message, options) {
                     type: "reply",
                     reply: { id: o, title: o.substring(0, 20) }
                 }))
+            }
+        }
+    }, {
+        headers: { Authorization: `Bearer ${TOKEN}` }
+    });
+}
+
+async function sendList(to, message, options) {
+    await axios.post(API_URL, {
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+            type: "list",
+            body: { text: message },
+            action: {
+                button: "Select Service",
+                sections: [
+                    {
+                        title: "Available Services",
+                        rows: options.map(o => ({
+                            id: o.id,
+                            title: o.title.substring(0, 24)
+                        }))
+                    }
+                ]
             }
         }
     }, {
