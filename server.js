@@ -28,7 +28,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// MAIN
+// MAIN WEBHOOK
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -40,15 +40,27 @@ app.post("/webhook", async (req, res) => {
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
 
+        // ===== FETCH SHEET =====
         const sheetRes = await axios.get(SHEET_URL);
-        const data = typeof sheetRes.data === "string"
-            ? JSON.parse(sheetRes.data)
-            : sheetRes.data;
+
+        let raw = sheetRes.data;
+
+        if (typeof raw === "string") {
+            try {
+                raw = JSON.parse(raw);
+            } catch (e) {
+                console.log("❌ JSON PARSE ERROR");
+                raw = {};
+            }
+        }
+
+        const data = raw || {};
 
         const flow = data.flow || [];
         const services = data.services || [];
         const config = data.config || [];
 
+        // ===== PARSE FLOW =====
         const flowData = flow.slice(1).map(r => ({
             step: r[0],
             type: r[1],
@@ -57,12 +69,14 @@ app.post("/webhook", async (req, res) => {
             next: r[4]
         }));
 
+        // ===== CONFIG =====
         const configObj = {};
         config.slice(1).forEach(r => configObj[r[0]] = r[1]);
 
+        // ===== INIT USER =====
         if (!users[from]) users[from] = { step: "start" };
 
-        // ===== RESET =====
+        // ===== RESTART =====
         if (replyId === "start_over") {
             users[from] = { step: "start" };
             await sendText(from, "🔁 Restarted\nEnter your name 😊");
@@ -78,9 +92,18 @@ app.post("/webhook", async (req, res) => {
         }
 
         // ===== SAVE INPUT =====
-        if (currentStep === "name") users[from].name = text;
-        if (currentStep === "service") users[from].service = (replyId || text).toLowerCase().trim();
-        if (currentStep === "contact") users[from].sameNumber = replyId || text;
+        if (currentStep === "name") {
+            users[from].name = text;
+            users[from].step = "service"; // 🔥 FIX LOOP
+        }
+
+        if (currentStep === "service") {
+            users[from].service = (replyId || text).toLowerCase().trim();
+        }
+
+        if (currentStep === "contact") {
+            users[from].sameNumber = replyId || text;
+        }
 
         let msg = (stepData.message || "").replace("{{name}}", users[from].name || "");
 
@@ -96,9 +119,10 @@ app.post("/webhook", async (req, res) => {
 
             if (stepData.step === "service") {
 
-                // 🔥 FIXED SERVICE EXTRACTION
+                let uniqueServices = [];
+
                 if (Array.isArray(services) && services.length > 1) {
-                    opts = [...new Set(
+                    uniqueServices = [...new Set(
                         services
                             .slice(1)
                             .map(r => r[0])
@@ -106,10 +130,13 @@ app.post("/webhook", async (req, res) => {
                     )];
                 }
 
-                // fallback safety
-                if (opts.length === 0) {
-                    opts = ["social_media", "design", "automation"];
+                console.log("SERVICES:", uniqueServices);
+
+                if (uniqueServices.length === 0) {
+                    uniqueServices = ["social_media", "design", "automation"];
                 }
+
+                opts = uniqueServices;
 
             } else {
                 opts = stepData.options
@@ -117,7 +144,6 @@ app.post("/webhook", async (req, res) => {
                     : [];
             }
 
-            // always add restart
             opts.push("start_over");
 
             await sendButtons(from, msg, opts);
@@ -140,8 +166,10 @@ app.post("/webhook", async (req, res) => {
             }
         }
 
-        // ===== NEXT STEP =====
-        users[from].step = stepData.next;
+        // ===== MOVE NEXT =====
+        if (currentStep !== "name") {
+            users[from].step = stepData.next;
+        }
 
         let nextStep = flowData.find(s => s.step === users[from].step);
 
@@ -245,4 +273,5 @@ async function sendImage(to, url) {
     });
 }
 
+// ===== START SERVER =====
 app.listen(3000, () => console.log("🚀 Server running"));
