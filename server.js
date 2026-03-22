@@ -1,4 +1,4 @@
-const TOKEN = "Bearer EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
+const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
@@ -195,7 +195,7 @@ async function sendText(to, message) {
         },
         {
             headers: {
-Authorization: `Bearer ${TOKEN}`
+Authorization: `Bearer ${TOKEN}`,
     "Content-Type": "application/json"
             }
         }
@@ -234,7 +234,7 @@ async function sendServiceList(to, message) {
         },
         {
             headers: {
-Authorization: `Bearer ${TOKEN}`
+Authorization: `Bearer ${TOKEN}`,
     "Content-Type": "application/json"
             }
         }
@@ -262,7 +262,7 @@ async function sendYesNoButtons(to, message) {
         },
         {
             headers: {
-Authorization: `Bearer ${TOKEN}`
+Authorization: `Bearer ${TOKEN}`,
     "Content-Type": "application/json"
             }
         }
@@ -280,7 +280,7 @@ async function sendImage(to, imageUrl) {
         },
         {
             headers: {
-                Authorization: `Bearer ${TOKEN}`,
+                Authorization: `Bearer ${TOKEN}`,,
                 "Content-Type": "application/json"
             }
         }
@@ -317,7 +317,7 @@ async function notifyOwner(data) {
         },
         {
             headers: {
-Authorization: `Bearer ${TOKEN}`
+Authorization: `Bearer ${TOKEN}`,
     "Content-Type": "application/json"
             }
         }
