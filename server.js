@@ -5,16 +5,16 @@ const axios = require("axios");
 const app = express();
 app.use(bodyParser.json());
 
-// 🔥 FIXED TOKEN (NO "Bearer" here)
+// 🔥 TOKEN (NO Bearer here)
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
 
 const PHONE_ID = "1079760248545797";
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbyDhXlZuupN5RNcj63WcG8DNF1hTyln3q8oqvIf7IByWxS5qZqwjLjZaD_20m8szyeU/exec";
 const VERIFY_TOKEN = "mytoken123";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbyDhXlZuupN5RNcj63WcG8DNF1hTyln3q8oqvIf7IByWxS5qZqwjLjZaD_20m8szyeU/exec";
 
 const users = {};
 
-// 🔹 Webhook verification
+// 🔹 Webhook verify
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -22,23 +22,21 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// 🔹 Incoming messages
+// 🔹 Webhook receive
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
         if (!message) return res.sendStatus(200);
 
         const from = message.from;
-        const text = message.text?.body?.toLowerCase();
+        const text = (message.text?.body || "").toLowerCase();
         const replyId =
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
 
         if (!users[from]) users[from] = { step: 1 };
 
-        console.log("User:", from, "Step:", users[from].step);
-
-        // ================= FLOW =================
+        console.log("STEP:", users[from].step, "INPUT:", replyId || text);
 
         // STEP 1
         if (users[from].step === 1) {
@@ -48,11 +46,7 @@ app.post("/webhook", async (req, res) => {
 
         // STEP 2
         else if (users[from].step === 2) {
-            const name = text
-                ?.split(" ")
-                .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-                .join(" ");
-
+            const name = text.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
             users[from].name = name;
 
             await sendServiceList(from, `Nice to meet you ${name} 😊\nChoose a service 👇`);
@@ -61,24 +55,26 @@ app.post("/webhook", async (req, res) => {
 
         // STEP 3
         else if (users[from].step === 3) {
-            users[from].service = replyId || text;
+            users[from].service = (replyId || text || "").toLowerCase();
 
             await sendYesNo(from, "Would you like to see sample work? 👀");
             users[from].step = 3.5;
         }
 
-        // STEP 3.5 (SAMPLE)
+        // STEP 3.5
         else if (users[from].step === 3.5) {
             const answer = (replyId || text || "").toLowerCase();
 
-            console.log("STEP 3.5:", answer);
+            console.log("STEP 3.5:", answer, users[from].service);
 
             if (answer.includes("yes")) {
 
-                if (users[from].service === "social_media") {
-                    await sendText(from, "Check our work:\nhttps://itmonkey.in");
+                const service = users[from].service;
+
+                if (service.includes("social")) {
+                    await sendText(from, "Check our Social Media work:\nhttps://itmonkey.in");
                 }
-                else if (users[from].service === "design") {
+                else if (service.includes("design")) {
                     await sendImage(from, "https://itmonkey.in/wp-content/uploads/2023/02/db2222-e1677611131516.png");
                 }
                 else {
@@ -176,8 +172,12 @@ async function sendServiceList(to, text) {
                     title: "Services",
                     rows: [
                         { id: "social_media", title: "Social Media 🚀" },
+                        { id: "digital_marketing", title: "Digital Marketing 📈" },
+                        { id: "shoot", title: "Content Shoot 🎬" },
+                        { id: "consulting", title: "Consulting 💡" },
+                        { id: "automation", title: "Automation 🤖" },
                         { id: "design", title: "Graphic Design 🎨" },
-                        { id: "automation", title: "Automation 🤖" }
+                        { id: "other", title: "Other 🔧" }
                     ]
                 }]
             }
