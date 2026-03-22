@@ -11,7 +11,7 @@ const PHONE_ID = "1079760248545797";
 const VERIFY_TOKEN = "mytoken123";
 
 // ✅ NEW SHEET URL
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbwoWM4DoA2Qsk7Kbiy6zftXGNYAEYFbU9lplccaywh9xrFGy7VpR5YgWoqQkVXh1NFi/exec";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbxMINIS_8Wy_eXJaNJ9Z7s0fvRnD3l2-fL8IgEpgjUA0uMIIDZTf4D31FkzaPIZHpZg/exec";
 
 const users = {};
 const delay = ms => new Promise(res => setTimeout(res, ms));
