@@ -5,7 +5,6 @@ const axios = require("axios");
 const app = express();
 app.use(bodyParser.json());
 
-// 🔥 TOKEN (NO Bearer here)
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
 
 const PHONE_ID = "1079760248545797";
@@ -22,7 +21,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// 🔹 Webhook receive
+// 🔹 Receive message
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -35,8 +34,6 @@ app.post("/webhook", async (req, res) => {
             message.interactive?.list_reply?.id;
 
         if (!users[from]) users[from] = { step: 1 };
-
-        console.log("STEP:", users[from].step, "INPUT:", replyId || text);
 
         // STEP 1
         if (users[from].step === 1) {
@@ -61,24 +58,31 @@ app.post("/webhook", async (req, res) => {
             users[from].step = 3.5;
         }
 
-        // STEP 3.5
+        // STEP 3.5 (DYNAMIC FROM SHEET)
         else if (users[from].step === 3.5) {
             const answer = (replyId || text || "").toLowerCase();
 
-            console.log("STEP 3.5:", answer, users[from].service);
-
             if (answer.includes("yes")) {
 
-                const service = users[from].service;
+                const services = await getServices();
 
-                if (service.includes("social")) {
-                    await sendText(from, "Check our Social Media work:\nhttps://itmonkey.in");
+                const matched = services.filter(s =>
+                    s.service.toLowerCase() === users[from].service
+                );
+
+                if (matched.length === 0) {
+                    await sendText(from, "No samples available right now.");
                 }
-                else if (service.includes("design")) {
-                    await sendImage(from, "https://itmonkey.in/wp-content/uploads/2023/02/db2222-e1677611131516.png");
-                }
-                else {
-                    await sendText(from, "Check our portfolio:\nhttps://itmonkey.in");
+
+                for (let item of matched) {
+
+                    if (item.type === "image") {
+                        await sendImage(from, item.content);
+                    }
+
+                    if (item.type === "link") {
+                        await sendText(from, item.content);
+                    }
                 }
 
                 await sendYesNo(from, "Would you like to proceed further? 🚀");
@@ -117,7 +121,19 @@ app.post("/webhook", async (req, res) => {
             await saveToSheet(lead);
             await notifyOwner(lead);
 
-            await sendText(from, `🎉 Thank you ${users[from].name}!\nWe will contact you shortly.\n📞 8504852601`);
+            // ✅ FINAL MESSAGE FIXED
+            await sendText(from,
+`🎉 Thank you, ${users[from].name}!  
+
+Your request has been successfully received ✅  
+
+Our team will connect with you shortly on your provided contact details 📞  
+
+If it’s urgent, feel free to call us directly at:  
+📲 *8504852601*  
+
+We’re excited to work with you! 🚀✨`
+            );
 
             users[from].step = 1;
         }
@@ -213,32 +229,38 @@ async function sendYesNo(to, text) {
     });
 }
 
-async function saveToSheet(data) {
-    try {
-        await axios.post(SHEET_URL, data);
-        console.log("📊 Saved");
-    } catch (err) {
-        console.log("Sheet Error:", err.message);
-    }
+// 🔹 FETCH SERVICES FROM SHEET
+async function getServices() {
+    const res = await axios.get(`${SHEET_URL}?type=services`);
+    const rows = res.data;
+    const headers = rows[0];
+
+    return rows.slice(1).map(row => {
+        let obj = {};
+        headers.forEach((h, i) => obj[h] = row[i]);
+        return obj;
+    });
 }
 
+// 🔹 SAVE LEADS
+async function saveToSheet(data) {
+    await axios.post(SHEET_URL, data);
+}
+
+// 🔹 NOTIFY OWNER
 async function notifyOwner(data) {
-    try {
-        await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
-            messaging_product: "whatsapp",
-            to: "918504852601",
-            text: {
-                body: `🚨 New Lead\n${data.name}\n${data.service}\n${data.phone}`
-            }
-        }, {
-            headers: {
-                Authorization: `Bearer ${TOKEN}`,
-                "Content-Type": "application/json"
-            }
-        });
-    } catch (err) {
-        console.log("Notify Error:", err.response?.data || err.message);
-    }
+    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+        messaging_product: "whatsapp",
+        to: "918504852601",
+        text: {
+            body: `🚨 New Lead\n${data.name}\n${data.service}\n${data.phone}`
+        }
+    }, {
+        headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            "Content-Type": "application/json"
+        }
+    });
 }
 
 app.listen(3000, () => console.log("🚀 Running"));
