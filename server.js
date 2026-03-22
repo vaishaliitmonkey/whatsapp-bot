@@ -5,7 +5,7 @@ const axios = require("axios");
 const app = express();
 app.use(bodyParser.json());
 
-// ===== YOUR CONFIG =====
+// ===== CONFIG =====
 const VERIFY_TOKEN = "mytoken123";
 
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
@@ -15,8 +15,6 @@ const PHONE_NUMBER_ID = "1079760248545797";
 const SHEET_URL = "https://script.google.com/macros/s/AKfycbzFn2eze-GAbxP0HEQQrQl25qFiuDUhdnIJEgfdmISIq1SB2oYVt6OGtGsTwAt0_vNR/exec";
 
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
-
-// =======================
 
 const users = {};
 
@@ -28,7 +26,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// MAIN WEBHOOK
+// MAIN
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -41,26 +39,17 @@ app.post("/webhook", async (req, res) => {
             message.interactive?.list_reply?.id;
 
         // ===== FETCH SHEET =====
-        const sheetRes = await axios.get(SHEET_URL);
-
-        let raw = sheetRes.data;
+        let raw = (await axios.get(SHEET_URL)).data;
 
         if (typeof raw === "string") {
-            try {
-                raw = JSON.parse(raw);
-            } catch (e) {
-                console.log("❌ JSON PARSE ERROR");
-                raw = {};
-            }
+            try { raw = JSON.parse(raw); } catch {}
         }
 
-        const data = raw || {};
+        const flow = raw.flow || [];
+        const services = raw.services || [];
+        const config = raw.config || [];
 
-        const flow = data.flow || [];
-        const services = data.services || [];
-        const config = data.config || [];
-
-        // ===== PARSE FLOW =====
+        // ===== FLOW =====
         const flowData = flow.slice(1).map(r => ({
             step: r[0],
             type: r[1],
@@ -73,7 +62,7 @@ app.post("/webhook", async (req, res) => {
         const configObj = {};
         config.slice(1).forEach(r => configObj[r[0]] = r[1]);
 
-        // ===== INIT USER =====
+        // ===== USER INIT =====
         if (!users[from]) users[from] = { step: "start" };
 
         // ===== RESTART =====
@@ -83,8 +72,8 @@ app.post("/webhook", async (req, res) => {
             return res.sendStatus(200);
         }
 
-        let currentStep = users[from].step;
-        let stepData = flowData.find(s => s.step === currentStep);
+        let step = users[from].step;
+        let stepData = flowData.find(s => s.step === step);
 
         if (!stepData) {
             users[from].step = "start";
@@ -92,16 +81,16 @@ app.post("/webhook", async (req, res) => {
         }
 
         // ===== SAVE INPUT =====
-        if (currentStep === "name") {
+        if (step === "name") {
             users[from].name = text;
-            users[from].step = "service"; // 🔥 FIX LOOP
+            users[from].step = "service";
         }
 
-        if (currentStep === "service") {
-            users[from].service = (replyId || text).toLowerCase().trim();
+        if (step === "service") {
+            users[from].service = replyId || text;
         }
 
-        if (currentStep === "contact") {
+        if (step === "contact") {
             users[from].sameNumber = replyId || text;
         }
 
@@ -119,24 +108,26 @@ app.post("/webhook", async (req, res) => {
 
             if (stepData.step === "service") {
 
-                let uniqueServices = [];
+                let serviceNames = [];
 
-                if (Array.isArray(services) && services.length > 1) {
-                    uniqueServices = [...new Set(
-                        services
-                            .slice(1)
-                            .map(r => r[0])
-                            .filter(s => s && s !== "service")
-                    )];
+                if (Array.isArray(services)) {
+
+                    serviceNames = services.slice(1).map(r => {
+                        if (Array.isArray(r)) return r[0];
+                        if (typeof r === "object") return r.service;
+                        return null;
+                    }).filter(Boolean);
+
+                    serviceNames = [...new Set(serviceNames)];
                 }
 
-                console.log("SERVICES:", uniqueServices);
+                console.log("SERVICES:", serviceNames);
 
-                if (uniqueServices.length === 0) {
-                    uniqueServices = ["social_media", "design", "automation"];
+                if (serviceNames.length === 0) {
+                    serviceNames = ["social_media", "design", "automation"];
                 }
 
-                opts = uniqueServices;
+                opts = serviceNames;
 
             } else {
                 opts = stepData.options
@@ -149,40 +140,44 @@ app.post("/webhook", async (req, res) => {
             await sendButtons(from, msg, opts);
         }
 
-        // ===== SAMPLE ACTION =====
+        // ===== ACTION =====
         if (stepData.type === "action") {
-            const selectedService = users[from].service;
 
-            const filtered = services.slice(1).filter(r =>
-                r[0]?.toLowerCase().trim() === selectedService
-            );
+            const selected = users[from].service;
+
+            const filtered = services.slice(1).filter(r => {
+                if (Array.isArray(r)) return r[0] === selected;
+                if (typeof r === "object") return r.service === selected;
+                return false;
+            });
 
             for (let row of filtered) {
-                if (row[2] === "image") {
-                    await sendImage(from, row[3]);
+                let type = Array.isArray(row) ? row[2] : row.type;
+                let content = Array.isArray(row) ? row[3] : row.content;
+
+                if (type === "image") {
+                    await sendImage(from, content);
                 } else {
-                    await sendText(from, row[3]);
+                    await sendText(from, content);
                 }
             }
         }
 
-        // ===== MOVE NEXT =====
-        if (currentStep !== "name") {
+        // ===== NEXT =====
+        if (step !== "name") {
             users[from].step = stepData.next;
         }
 
-        let nextStep = flowData.find(s => s.step === users[from].step);
+        let next = flowData.find(s => s.step === users[from].step);
 
-        if (nextStep) {
-            let nextMsg = (nextStep.message || "").replace("{{name}}", users[from].name || "");
+        if (next) {
+            let nextMsg = (next.message || "").replace("{{name}}", users[from].name || "");
 
-            if (nextStep.type === "text") {
-                await sendText(from, nextMsg);
-            }
+            if (next.type === "text") await sendText(from, nextMsg);
 
-            if (nextStep.type === "button") {
-                let opts = nextStep.options
-                    ? nextStep.options.split(",").map(o => o.trim())
+            if (next.type === "button") {
+                let opts = next.options
+                    ? next.options.split(",").map(o => o.trim())
                     : [];
 
                 opts.push("start_over");
@@ -218,7 +213,7 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
 });
 
-// ===== SENDERS =====
+// ===== SEND =====
 
 async function sendText(to, message) {
     await axios.post(API_URL, {
@@ -226,22 +221,11 @@ async function sendText(to, message) {
         to,
         text: { body: message }
     }, {
-        headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json"
-        }
+        headers: { Authorization: `Bearer ${TOKEN}` }
     });
 }
 
 async function sendButtons(to, message, options) {
-    const buttons = options.map(opt => ({
-        type: "reply",
-        reply: {
-            id: opt,
-            title: opt.substring(0, 20)
-        }
-    }));
-
     await axios.post(API_URL, {
         messaging_product: "whatsapp",
         to,
@@ -249,13 +233,15 @@ async function sendButtons(to, message, options) {
         interactive: {
             type: "button",
             body: { text: message },
-            action: { buttons }
+            action: {
+                buttons: options.map(o => ({
+                    type: "reply",
+                    reply: { id: o, title: o.substring(0, 20) }
+                }))
+            }
         }
     }, {
-        headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json"
-        }
+        headers: { Authorization: `Bearer ${TOKEN}` }
     });
 }
 
@@ -266,12 +252,8 @@ async function sendImage(to, url) {
         type: "image",
         image: { link: url }
     }, {
-        headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json"
-        }
+        headers: { Authorization: `Bearer ${TOKEN}` }
     });
 }
 
-// ===== START SERVER =====
-app.listen(3000, () => console.log("🚀 Server running"));
+app.listen(3000, () => console.log("🚀 Running"));
