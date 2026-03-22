@@ -33,6 +33,20 @@ app.post("/webhook", async (req, res) => {
 
         const from = message.from;
         const text = message.text?.body?.toLowerCase() || "";
+        // 🔥 GLOBAL RESTART
+if (["hi", "hello", "start", "restart"].includes(text)) {
+    users[from] = { step: "start" };
+
+    console.log("🔁 USER RESET");
+
+    // send first message manually
+    await sendText(
+        from,
+        "Hey 👋 Welcome to IT Monkey!\nPlease enter your full name 😊"
+    );
+
+    return res.sendStatus(200);
+}
 
         const replyId =
             message.interactive?.button_reply?.id ||
@@ -86,6 +100,17 @@ app.post("/webhook", async (req, res) => {
         // 🔹 SAVE INPUT
         if (currentStep === "name") users[from].name = text;
         if (currentStep === "service") users[from].service = replyId || text;
+        // 🔁 BUTTON RESET
+if (replyId === "start_over") {
+    users[from] = { step: "start" };
+
+    await sendText(
+        from,
+        "Hey 👋 Welcome back!\nPlease enter your full name 😊"
+    );
+
+    return res.sendStatus(200);
+}
         if (currentStep === "contact") users[from].sameNumber = replyId || text;
 
         // 🔹 MESSAGE
