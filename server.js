@@ -69,11 +69,11 @@ app.post("/webhook", async (req, res) => {
 
         // STEP 3.5 (SAMPLE)
         else if (users[from].step === 3.5) {
-            const answer = replyId || text;
+            const answer = (replyId || text || "").toLowerCase();
 
             console.log("STEP 3.5:", answer);
 
-            if (answer === "yes") {
+            if (answer.includes("yes")) {
 
                 if (users[from].service === "social_media") {
                     await sendText(from, "Check our work:\nhttps://itmonkey.in");
@@ -96,9 +96,9 @@ app.post("/webhook", async (req, res) => {
 
         // STEP 3.6
         else if (users[from].step === 3.6) {
-            const answer = replyId || text;
+            const answer = (replyId || text || "").toLowerCase();
 
-            if (answer === "yes") {
+            if (answer.includes("yes")) {
                 await sendYesNo(from, "Great! Is this your calling number? 📲");
                 users[from].step = 4;
             } else {
