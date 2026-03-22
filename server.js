@@ -71,17 +71,78 @@ Tell us what you’re looking for 👇`
 
             users[from].step = 3;
 
-        } else if (users[from].step === 3) {
+      } else if (users[from].step === 3) {
 
-            users[from].service = replyId || text;
+    users[from].service = replyId || text;
 
-            await sendYesNoButtons(from,
+    await sendYesNoButtons(from,
+`Would you like to see some sample work? 👀`
+    );
+
+    users[from].step = 3.5;
+
+            } else if (users[from].step === 3.5) {
+
+    const answer = replyId || text;
+
+    if (answer === "yes") {
+
+        // 🔥 Send based on service
+        if (users[from].service === "social_media") {
+
+            await sendText(from,
+"Here are some of our Social Media works:\nhttps://your-link.com");
+
+        } else if (users[from].service === "design") {
+
+            await sendImage(from,
+"https://your-image-url.com/sample.jpg");
+
+        } else {
+
+            await sendText(from,
+"Here are some of our works:\nhttps://your-link.com");
+        }
+
+        await sendYesNoButtons(from,
+`Would you like to proceed further? 🚀`
+        );
+
+        users[from].step = 3.6;
+
+    } else {
+
+        // Skip sample → go to step 4
+        await sendYesNoButtons(from,
 `Quick check 📲  
 
 Is this WhatsApp number your *calling number* as well?`
-            );
+        );
 
-            users[from].step = 4;
+        users[from].step = 4;
+    }
+            } else if (users[from].step === 3.6) {
+
+    const answer = replyId || text;
+
+    if (answer === "yes") {
+
+        await sendYesNoButtons(from,
+`Great! Let's continue 👇  
+
+Is this WhatsApp number your *calling number* as well?`
+        );
+
+        users[from].step = 4;
+
+    } else {
+
+        await sendText(from,
+"No worries 😊  
+Let us know whenever you're ready!");
+        
+        users[from].step = 1;
+    }
 
         } else if (users[from].step === 4) {
 
@@ -208,6 +269,23 @@ Authorization: `Bearer ${TOKEN}`
     );
 }
 
+async function sendImage(to, imageUrl) {
+    await axios.post(
+        "https://graph.facebook.com/v18.0/1079760248545797/messages",
+        {
+            messaging_product: "whatsapp",
+            to: to,
+            type: "image",
+            image: { link: imageUrl }
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${TOKEN}`,
+                "Content-Type": "application/json"
+            }
+        }
+    );
+}
 // 🔹 SAVE TO GOOGLE SHEETS
 async function saveToSheet(data) {
     try {
@@ -247,6 +325,7 @@ Authorization: `Bearer ${TOKEN}`
 
     console.log("📲 Owner notified");
 }
+
 
 // 🔹 START SERVER
 app.listen(3000, () => {
