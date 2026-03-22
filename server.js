@@ -7,18 +7,18 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = "mytoken123";
 
-// ✅ YOUR REAL VALUES (ALREADY FILLED)
+// ✅ YOUR REAL VALUES
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
 
 const PHONE_NUMBER_ID = "1079760248545797";
 
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbwoWM4DoA2Qsk7Kbiy6zftXGNYAEYFbU9lplccaywh9xrFGy7VpR5YgWoqQkVXh1NFi/exec";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbz6TWjW13gwAeI2TVxS_Jr_S-DQhKO__4paMxyBZgFjMJxdb9brTkaGTDGs4twogcRn/exec";
 
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
 const users = {};
 
-// 🔹 VERIFY WEBHOOK
+// 🔹 VERIFY
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -39,13 +39,16 @@ app.post("/webhook", async (req, res) => {
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
 
-        // 🔹 Fetch data from sheet
+        console.log("Incoming:", text || replyId);
+
+        // 🔹 GET SHEET DATA
         const sheetRes = await axios.get(SHEET_URL);
 
         const flow = sheetRes.data.flow;
         const services = sheetRes.data.services;
         const config = sheetRes.data.config;
 
+        // 🔹 FORMAT FLOW
         const flowData = flow.slice(1).map(r => ({
             step: r[0],
             type: r[1],
@@ -54,20 +57,27 @@ app.post("/webhook", async (req, res) => {
             next: r[4]
         }));
 
+        // 🔹 CONFIG OBJECT
         const configObj = {};
         config.slice(1).forEach(r => configObj[r[0]] = r[1]);
 
+        // 🔹 USER INIT
         if (!users[from]) users[from] = { step: "start" };
 
         let currentStep = users[from].step;
         let stepData = flowData.find(s => s.step === currentStep);
 
-        // 🔹 Save user inputs
+        if (!stepData) {
+            users[from].step = "start";
+            stepData = flowData.find(s => s.step === "start");
+        }
+
+        // 🔹 SAVE INPUT
         if (currentStep === "name") users[from].name = text;
         if (currentStep === "service") users[from].service = replyId || text;
         if (currentStep === "contact") users[from].sameNumber = replyId || text;
 
-        // 🔹 Replace variables
+        // 🔹 MESSAGE
         let msg = stepData.message || "";
         msg = msg.replace("{{name}}", users[from].name || "");
 
@@ -82,13 +92,13 @@ app.post("/webhook", async (req, res) => {
             await sendButtons(from, msg, opts);
         }
 
-        // 🔥 ACTION (SEND SAMPLE)
+        // 🔥 ACTION (SEND MEDIA)
         if (stepData.type === "action") {
 
             const selectedService = users[from].service?.toLowerCase();
 
-            const filtered = services.slice(1).filter(row =>
-                row[0].toLowerCase() === selectedService
+            const filtered = services.slice(1).filter(r =>
+                r[0].toLowerCase() === selectedService
             );
 
             for (let row of filtered) {
@@ -103,10 +113,9 @@ app.post("/webhook", async (req, res) => {
             }
         }
 
-        // 🔹 Move to next step
+        // 🔹 NEXT STEP
         users[from].step = stepData.next;
 
-        // 🔹 Next step auto send
         let nextStep = flowData.find(s => s.step === users[from].step);
 
         if (nextStep) {
@@ -131,6 +140,10 @@ app.post("/webhook", async (req, res) => {
                 phone: from,
                 service: users[from].service,
                 sameNumber: users[from].sameNumber
+            }, {
+                headers: {
+                    "Content-Type": "application/json"
+                }
             });
 
             if (configObj.notify === "on") {
@@ -164,7 +177,7 @@ async function sendText(to, message) {
     });
 }
 
-// 🔹 BUTTON
+// 🔹 BUTTONS
 async function sendButtons(to, message, options) {
     const buttons = options.map(opt => ({
         type: "reply",
