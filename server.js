@@ -6,15 +6,17 @@ const app = express();
 app.use(bodyParser.json());
 
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
+
 const PHONE_ID = "1079760248545797";
 const VERIFY_TOKEN = "mytoken123";
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbyDhXlZuupN5RNcj63WcG8DNF1hTyln3q8oqvIf7IByWxS5qZqwjLjZaD_20m8szyeU/exec";
+
+// ✅ NEW SHEET URL
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbwoWM4DoA2Qsk7Kbiy6zftXGNYAEYFbU9lplccaywh9xrFGy7VpR5YgWoqQkVXh1NFi/exec";
 
 const users = {};
-
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// 🔹 VERIFY WEBHOOK
+// 🔹 VERIFY
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -22,7 +24,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// 🔹 MAIN LOGIC
+// 🔹 MAIN
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -30,6 +32,7 @@ app.post("/webhook", async (req, res) => {
 
         const from = message.from;
         const text = (message.text?.body || "").toLowerCase();
+
         const replyId =
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
@@ -75,7 +78,7 @@ app.post("/webhook", async (req, res) => {
 
                 const services = await getServices();
 
-                console.log("📦 ALL SERVICES:", services);
+                console.log("📦 RAW SERVICES:", services);
                 console.log("👤 USER SERVICE:", users[from].service);
 
                 const matched = services.filter(
@@ -138,8 +141,7 @@ app.post("/webhook", async (req, res) => {
             await saveToSheet(lead);
             await notifyOwner(lead);
 
-            await sendText(
-                from,
+            await sendText(from,
 `🎉 Thank you, ${users[from].name}!  
 
 Your request has been received ✅  
@@ -160,10 +162,27 @@ Our team will contact you shortly 📞
 
 // ================= FUNCTIONS =================
 
-// 🔹 FETCH SERVICES
+// 🔹 FIXED SERVICE FETCH
 async function getServices() {
     const res = await axios.get(`${SHEET_URL}?type=services`);
-    const rows = res.data;
+
+    let rows = res.data;
+
+    console.log("RAW SHEET:", rows);
+
+    if (typeof rows === "string") {
+        rows = JSON.parse(rows);
+    }
+
+    if (!Array.isArray(rows)) {
+        rows = rows.data || rows.values || [];
+    }
+
+    if (!Array.isArray(rows)) {
+        console.log("❌ SHEET FORMAT INVALID");
+        return [];
+    }
+
     const headers = rows[0];
 
     return rows.slice(1).map(row => {
@@ -173,7 +192,7 @@ async function getServices() {
     });
 }
 
-// 🔹 DYNAMIC SERVICE LIST
+// 🔹 DYNAMIC LIST
 async function sendDynamicServiceList(to, text) {
     const services = await getServices();
 
@@ -239,7 +258,7 @@ async function sendImage(to, url) {
     });
 }
 
-// 🔹 YES NO BUTTON
+// 🔹 YES NO
 async function sendYesNo(to, text) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
@@ -263,12 +282,12 @@ async function sendYesNo(to, text) {
     });
 }
 
-// 🔹 SAVE LEAD
+// 🔹 SAVE
 async function saveToSheet(data) {
     await axios.post(SHEET_URL, data);
 }
 
-// 🔹 OWNER NOTIFY
+// 🔹 NOTIFY
 async function notifyOwner(data) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
