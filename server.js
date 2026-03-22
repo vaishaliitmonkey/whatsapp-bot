@@ -91,12 +91,12 @@ Tell us what you’re looking for 👇`
         if (users[from].service === "social_media") {
 
             await sendText(from,
-"Here are some of our Social Media works:\nhttps://your-link.com");
+"Here are some of our Social Media works:\nhttps://itmonkey.in");
 
         } else if (users[from].service === "design") {
 
             await sendImage(from,
-"https://your-image-url.com/sample.jpg");
+"https://itmonkey.in/wp-content/uploads/2023/02/db2222-e1677611131516.png");
 
         } else {
 
