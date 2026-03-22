@@ -13,6 +13,11 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbyDhXlZuupN5RNcj63WcG
 
 const users = {};
 
+// 🔹 Delay function (IMPORTANT)
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // 🔹 Webhook verify
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
@@ -21,7 +26,7 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// 🔹 Receive message
+// 🔹 Receive messages
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -34,6 +39,8 @@ app.post("/webhook", async (req, res) => {
             message.interactive?.list_reply?.id;
 
         if (!users[from]) users[from] = { step: 1 };
+
+        console.log("STEP:", users[from].step, "INPUT:", replyId || text);
 
         // STEP 1
         if (users[from].step === 1) {
@@ -58,7 +65,7 @@ app.post("/webhook", async (req, res) => {
             users[from].step = 3.5;
         }
 
-        // STEP 3.5 (DYNAMIC FROM SHEET)
+        // STEP 3.5 (DYNAMIC)
         else if (users[from].step === 3.5) {
             const answer = (replyId || text || "").toLowerCase();
 
@@ -67,8 +74,10 @@ app.post("/webhook", async (req, res) => {
                 const services = await getServices();
 
                 const matched = services.filter(s =>
-                    s.service.toLowerCase() === users[from].service
+                    users[from].service.includes((s.service || "").toLowerCase())
                 );
+
+                console.log("MATCHED:", matched);
 
                 if (matched.length === 0) {
                     await sendText(from, "No samples available right now.");
@@ -76,12 +85,16 @@ app.post("/webhook", async (req, res) => {
 
                 for (let item of matched) {
 
-                    if (item.type === "image") {
+                    const type = (item.type || "").toLowerCase();
+
+                    if (type === "image") {
                         await sendImage(from, item.content);
+                        await delay(1000); // 🔥 IMPORTANT
                     }
 
-                    if (item.type === "link") {
+                    if (type === "link") {
                         await sendText(from, item.content);
+                        await delay(1000); // 🔥 IMPORTANT
                     }
                 }
 
@@ -121,7 +134,6 @@ app.post("/webhook", async (req, res) => {
             await saveToSheet(lead);
             await notifyOwner(lead);
 
-            // ✅ FINAL MESSAGE FIXED
             await sendText(from,
 `🎉 Thank you, ${users[from].name}!  
 
@@ -229,7 +241,7 @@ async function sendYesNo(to, text) {
     });
 }
 
-// 🔹 FETCH SERVICES FROM SHEET
+// 🔹 GET SERVICES FROM SHEET
 async function getServices() {
     const res = await axios.get(`${SHEET_URL}?type=services`);
     const rows = res.data;
@@ -242,12 +254,12 @@ async function getServices() {
     });
 }
 
-// 🔹 SAVE LEADS
+// 🔹 SAVE
 async function saveToSheet(data) {
     await axios.post(SHEET_URL, data);
 }
 
-// 🔹 NOTIFY OWNER
+// 🔹 NOTIFY
 async function notifyOwner(data) {
     await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
         messaging_product: "whatsapp",
