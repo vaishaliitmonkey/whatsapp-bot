@@ -5,222 +5,158 @@ const axios = require("axios");
 const app = express();
 app.use(bodyParser.json());
 
-const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
-
-const PHONE_ID = "1079760248545797";
 const VERIFY_TOKEN = "mytoken123";
 
-// ✅ NEW SHEET URL
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbxMINIS_8Wy_eXJaNJ9Z7s0fvRnD3l2-fL8IgEpgjUA0uMIIDZTf4D31FkzaPIZHpZg/exec";
+// 🔑 IMPORTANT
+const TOKEN = "YOUR_PERMANENT_TOKEN";
+const PHONE_NUMBER_ID = "YOUR_PHONE_NUMBER_ID";
+const SHEET_URL = "YOUR_GOOGLE_SCRIPT_URL";
+
+const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
 const users = {};
-const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// 🔹 VERIFY
+// 🔹 VERIFY WEBHOOK
 app.get("/webhook", (req, res) => {
-    if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
-        return res.send(req.query["hub.challenge"]);
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+
+    if (mode && token === VERIFY_TOKEN) {
+        res.status(200).send(challenge);
+    } else {
+        res.sendStatus(403);
     }
-    res.sendStatus(403);
 });
 
-// 🔹 MAIN
+// 🔥 MAIN BOT
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
         if (!message) return res.sendStatus(200);
 
         const from = message.from;
-        const text = (message.text?.body || "").toLowerCase();
+        const text = message.text?.body?.toLowerCase();
 
-        const replyId =
-            message.interactive?.button_reply?.id ||
-            message.interactive?.list_reply?.id;
+        // 🔹 Fetch sheet data
+        const sheetRes = await axios.get(SHEET_URL);
+        const flow = sheetRes.data.flow;
+        const services = sheetRes.data.services;
+        const config = sheetRes.data.config || [];
 
-        if (!users[from]) users[from] = { step: 1 };
+        const flowData = flow.slice(1).map(r => ({
+            step: r[0],
+            type: r[1],
+            message: r[2],
+            options: r[3],
+            next: r[4]
+        }));
 
-        console.log("STEP:", users[from].step, "INPUT:", replyId || text);
+        // 🔹 Config
+        const configObj = {};
+        config.slice(1).forEach(r => configObj[r[0]] = r[1]);
 
-        // STEP 1
-        if (users[from].step === 1) {
-            await sendText(from, "Hey 👋 Welcome to IT Monkey!\nPlease enter your full name 😊");
-            users[from].step = 2;
+        // 🔹 Init user
+        if (!users[from]) users[from] = { step: "start" };
+
+        let currentStep = users[from].step;
+        let stepData = flowData.find(s => s.step === currentStep);
+
+        // 🔹 Save data
+        if (currentStep === "name") users[from].name = text;
+        if (currentStep === "service") users[from].service = text;
+        if (currentStep === "contact") users[from].sameNumber = text;
+
+        // 🔹 Replace variables
+        let msg = stepData.message || "";
+        msg = msg.replace("{{name}}", users[from].name || "");
+
+        // 🔥 HANDLE TYPES
+
+        if (stepData.type === "text") {
+            await sendText(from, msg);
         }
 
-        // STEP 2
-        else if (users[from].step === 2) {
-            const name = text
-                .split(" ")
-                .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-                .join(" ");
-
-            users[from].name = name;
-
-            await sendDynamicServiceList(from, `Nice to meet you ${name} 😊\nChoose a service 👇`);
-            users[from].step = 3;
+        if (stepData.type === "button") {
+            let opts = stepData.options.split(",").slice(0, 3);
+            await sendButtons(from, msg, opts);
         }
 
-        // STEP 3
-        else if (users[from].step === 3) {
-            users[from].service = replyId;
+        // 🔥 ACTION → SEND SAMPLE
+        if (stepData.type === "action") {
 
-            console.log("✅ SELECTED SERVICE:", replyId);
+            if (users[from].service) {
 
-            await sendYesNo(from, "Would you like to see sample work? 👀");
-            users[from].step = 3.5;
-        }
-
-        // STEP 3.5
-        else if (users[from].step === 3.5) {
-            const answer = (replyId || text || "").toLowerCase();
-
-            if (answer.includes("yes")) {
-
-                const services = await getServices();
-
-                console.log("📦 RAW SERVICES:", services);
-                console.log("👤 USER SERVICE:", users[from].service);
-
-                const matched = services.filter(
-                    s => (s.service || "").toLowerCase().trim() === (users[from].service || "").toLowerCase().trim()
+                const filtered = services.slice(1).filter(r =>
+                    r[0].toLowerCase() === users[from].service.toLowerCase()
                 );
 
-                console.log("🎯 MATCHED:", matched);
-
-                if (matched.length === 0) {
-                    await sendText(from, "⚠️ No sample found. Please check sheet data.");
-                }
-
-                for (let item of matched) {
-                    const type = (item.type || "").toLowerCase().trim();
+                for (let row of filtered) {
+                    const type = row[2];
+                    const content = row[3];
 
                     if (type === "image") {
-                        await sendImage(from, item.content);
-                        await delay(1000);
-                    }
-
-                    if (type === "link") {
-                        await sendText(from, item.content);
-                        await delay(1000);
+                        await sendImage(from, content);
+                    } else {
+                        await sendText(from, content);
                     }
                 }
-
-                await sendYesNo(from, "Would you like to proceed further? 🚀");
-                users[from].step = 3.6;
-
-            } else {
-                await sendYesNo(from, "Is this your calling number as well? 📲");
-                users[from].step = 4;
             }
         }
 
-        // STEP 3.6
-        else if (users[from].step === 3.6) {
-            const answer = (replyId || text || "").toLowerCase();
+        // 🔹 Move next
+        users[from].step = stepData.next;
 
-            if (answer.includes("yes")) {
-                await sendYesNo(from, "Great! Is this your calling number? 📲");
-                users[from].step = 4;
-            } else {
-                await sendText(from, "No problem 😊 Come back anytime!");
-                users[from].step = 1;
+        // 🔹 Next step auto
+        let nextStep = flowData.find(s => s.step === users[from].step);
+
+        if (nextStep) {
+            let nextMsg = nextStep.message || "";
+            nextMsg = nextMsg.replace("{{name}}", users[from].name || "");
+
+            if (nextStep.type === "text") {
+                await sendText(from, nextMsg);
+            }
+
+            if (nextStep.type === "button") {
+                let opts = nextStep.options.split(",").slice(0, 3);
+                await sendButtons(from, nextMsg, opts);
             }
         }
 
-        // STEP 4
-        else if (users[from].step === 4) {
-            users[from].sameNumber = replyId || text;
+        // 🔥 SAVE LEAD + NOTIFY
+        if (users[from].step === "end") {
 
-            const lead = {
+            await axios.post(SHEET_URL, {
                 name: users[from].name,
                 phone: from,
                 service: users[from].service,
                 sameNumber: users[from].sameNumber
-            };
+            });
 
-            await saveToSheet(lead);
-            await notifyOwner(lead);
+            if (configObj.notify === "on") {
+                await sendText(
+                    configObj.owner_number,
+                    `🔥 New Lead\n👤 ${users[from].name}\n📞 ${from}\n💼 ${users[from].service}`
+                );
+            }
 
-            await sendText(from,
-`🎉 Thank you, ${users[from].name}!  
-
-Your request has been received ✅  
-Our team will contact you shortly 📞  
-
-📲 8504852601`
-            );
-
-            users[from].step = 1;
+            users[from] = { step: "start" };
         }
 
     } catch (err) {
-        console.log("❌ ERROR:", err.response?.data || err.message);
+        console.log("ERROR:", err.response?.data || err.message);
     }
 
     res.sendStatus(200);
 });
 
-// ================= FUNCTIONS =================
-
-// 🔹 FIXED SERVICE FETCH
-async function getServices() {
-    const res = await axios.get(`${SHEET_URL}?type=services`);
-
-    let rows = res.data;
-
-    console.log("RAW SHEET:", rows);
-
-    if (typeof rows === "string") {
-        rows = JSON.parse(rows);
-    }
-
-    if (!Array.isArray(rows)) {
-        rows = rows.data || rows.values || [];
-    }
-
-    if (!Array.isArray(rows)) {
-        console.log("❌ SHEET FORMAT INVALID");
-        return [];
-    }
-
-    const headers = rows[0];
-
-    return rows.slice(1).map(row => {
-        let obj = {};
-        headers.forEach((h, i) => obj[h] = row[i]);
-        return obj;
-    });
-}
-
-// 🔹 DYNAMIC LIST
-async function sendDynamicServiceList(to, text) {
-    const services = await getServices();
-
-    const unique = {};
-    services.forEach(s => {
-        unique[s.service] = s.title;
-    });
-
-    const rows = Object.keys(unique).map(key => ({
-        id: key,
-        title: (unique[key] || "").substring(0, 24)
-    }));
-
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+// 🔹 SEND TEXT
+async function sendText(to, message) {
+    await axios.post(API_URL, {
         messaging_product: "whatsapp",
         to,
-        type: "interactive",
-        interactive: {
-            type: "list",
-            body: { text },
-            action: {
-                button: "Select Service",
-                sections: [{
-                    title: "Services",
-                    rows
-                }]
-            }
-        }
+        text: { body: message }
     }, {
         headers: {
             Authorization: `Bearer ${TOKEN}`,
@@ -229,12 +165,25 @@ async function sendDynamicServiceList(to, text) {
     });
 }
 
-// 🔹 TEXT
-async function sendText(to, text) {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+// 🔹 BUTTONS
+async function sendButtons(to, message, options) {
+    const buttons = options.map(opt => ({
+        type: "reply",
+        reply: {
+            id: opt,
+            title: opt.substring(0, 20)
+        }
+    }));
+
+    await axios.post(API_URL, {
         messaging_product: "whatsapp",
         to,
-        text: { body: text }
+        type: "interactive",
+        interactive: {
+            type: "button",
+            body: { text: message },
+            action: { buttons }
+        }
     }, {
         headers: {
             Authorization: `Bearer ${TOKEN}`,
@@ -245,7 +194,7 @@ async function sendText(to, text) {
 
 // 🔹 IMAGE
 async function sendImage(to, url) {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+    await axios.post(API_URL, {
         messaging_product: "whatsapp",
         to,
         type: "image",
@@ -258,49 +207,4 @@ async function sendImage(to, url) {
     });
 }
 
-// 🔹 YES NO
-async function sendYesNo(to, text) {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
-        messaging_product: "whatsapp",
-        to,
-        type: "interactive",
-        interactive: {
-            type: "button",
-            body: { text },
-            action: {
-                buttons: [
-                    { type: "reply", reply: { id: "yes", title: "Yes" } },
-                    { type: "reply", reply: { id: "no", title: "No" } }
-                ]
-            }
-        }
-    }, {
-        headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json"
-        }
-    });
-}
-
-// 🔹 SAVE
-async function saveToSheet(data) {
-    await axios.post(SHEET_URL, data);
-}
-
-// 🔹 NOTIFY
-async function notifyOwner(data) {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
-        messaging_product: "whatsapp",
-        to: "918504852601",
-        text: {
-            body: `🚨 New Lead\n${data.name}\n${data.service}\n${data.phone}`
-        }
-    }, {
-        headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json"
-        }
-    });
-}
-
-app.listen(3000, () => console.log("🚀 Server Running"));
+app.listen(3000, () => console.log("🚀 Server running"));
