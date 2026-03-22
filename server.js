@@ -7,12 +7,11 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = "mytoken123";
 
-// ✅ YOUR REAL VALUES
 const TOKEN = "EAA3QMwOB59gBQxydPFRss2cSJdweXHTuWZCEgleOM273EipShQGlNW7ZB0ynPhyzuZAZC4o8f9BDDDC5hDcACQvv8GntYW7oYzf2jxWzH0mODZBQuVsIiBcAIusZArmge1fZC3AT7kvYwoRbyj5yhgIsYCQrhc96GFhEc39HzLcVm5MFqYP5dXIg77supRTb0MrMAZDZD";
 
 const PHONE_NUMBER_ID = "1079760248545797";
 
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbz6TWjW13gwAeI2TVxS_Jr_S-DQhKO__4paMxyBZgFjMJxdb9brTkaGTDGs4twogcRn/exec";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbzFn2eze-GAbxP0HEQQrQl25qFiuDUhdnIJEgfdmISIq1SB2oYVt6OGtGsTwAt0_vNR/exec";
 
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
@@ -39,17 +38,27 @@ app.post("/webhook", async (req, res) => {
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
 
-        console.log("Incoming:", text || replyId);
+        console.log("📩 INPUT:", text || replyId);
 
-        // 🔹 GET SHEET DATA
+        // 🔥 FETCH SHEET
         const sheetRes = await axios.get(SHEET_URL);
 
-        const flow = sheetRes.data.flow;
-        const services = sheetRes.data.services;
-        const config = sheetRes.data.config;
+        let data = sheetRes.data;
+
+        if (typeof data === "string") {
+            data = JSON.parse(data);
+        }
+
+        const flow = Array.isArray(data.flow) ? data.flow : [];
+        const services = Array.isArray(data.services) ? data.services : [];
+        const config = Array.isArray(data.config) ? data.config : [];
+
+        console.log("FLOW:", flow.length);
+        console.log("SERVICES:", services.length);
+        console.log("CONFIG:", config.length);
 
         // 🔹 FORMAT FLOW
-        const flowData = flow.slice(1).map(r => ({
+        const flowData = (flow.length > 1 ? flow.slice(1) : []).map(r => ({
             step: r[0],
             type: r[1],
             message: r[2],
@@ -57,9 +66,11 @@ app.post("/webhook", async (req, res) => {
             next: r[4]
         }));
 
-        // 🔹 CONFIG OBJECT
+        // 🔹 CONFIG
         const configObj = {};
-        config.slice(1).forEach(r => configObj[r[0]] = r[1]);
+        (config.length > 1 ? config.slice(1) : []).forEach(r => {
+            configObj[r[0]] = r[1];
+        });
 
         // 🔹 USER INIT
         if (!users[from]) users[from] = { step: "start" };
@@ -92,14 +103,16 @@ app.post("/webhook", async (req, res) => {
             await sendButtons(from, msg, opts);
         }
 
-        // 🔥 ACTION (SEND MEDIA)
+        // 🔥 ACTION (MEDIA)
         if (stepData.type === "action") {
 
             const selectedService = users[from].service?.toLowerCase();
 
-            const filtered = services.slice(1).filter(r =>
-                r[0].toLowerCase() === selectedService
+            const filtered = (services.length > 1 ? services.slice(1) : []).filter(r =>
+                r[0]?.toLowerCase() === selectedService
             );
+
+            console.log("MATCHED SERVICES:", filtered);
 
             for (let row of filtered) {
                 const type = row[2];
@@ -141,9 +154,7 @@ app.post("/webhook", async (req, res) => {
                 service: users[from].service,
                 sameNumber: users[from].sameNumber
             }, {
-                headers: {
-                    "Content-Type": "application/json"
-                }
+                headers: { "Content-Type": "application/json" }
             });
 
             if (configObj.notify === "on") {
