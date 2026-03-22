@@ -17,7 +17,6 @@ const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
 const users = {};
 
-// 🔹 VERIFY
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -25,7 +24,6 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
-// 🔹 MAIN BOT
 app.post("/webhook", async (req, res) => {
     try {
         const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -33,46 +31,19 @@ app.post("/webhook", async (req, res) => {
 
         const from = message.from;
         const text = message.text?.body?.toLowerCase() || "";
-        // 🔥 GLOBAL RESTART
-if (["hi", "hello", "start", "restart"].includes(text)) {
-    users[from] = { step: "start" };
-
-    console.log("🔁 USER RESET");
-
-    // send first message manually
-    await sendText(
-        from,
-        "Hey 👋 Welcome to IT Monkey!\nPlease enter your full name 😊"
-    );
-
-    return res.sendStatus(200);
-}
 
         const replyId =
             message.interactive?.button_reply?.id ||
             message.interactive?.list_reply?.id;
 
-        console.log("📩 INPUT:", text || replyId);
-
-        // 🔥 FETCH SHEET
         const sheetRes = await axios.get(SHEET_URL);
+        let data = typeof sheetRes.data === "string" ? JSON.parse(sheetRes.data) : sheetRes.data;
 
-        let data = sheetRes.data;
+        const flow = data.flow || [];
+        const services = data.services || [];
+        const config = data.config || [];
 
-        if (typeof data === "string") {
-            data = JSON.parse(data);
-        }
-
-        const flow = Array.isArray(data.flow) ? data.flow : [];
-        const services = Array.isArray(data.services) ? data.services : [];
-        const config = Array.isArray(data.config) ? data.config : [];
-
-        console.log("FLOW:", flow.length);
-        console.log("SERVICES:", services.length);
-        console.log("CONFIG:", config.length);
-
-        // 🔹 FORMAT FLOW
-        const flowData = (flow.length > 1 ? flow.slice(1) : []).map(r => ({
+        const flowData = flow.slice(1).map(r => ({
             step: r[0],
             type: r[1],
             message: r[2],
@@ -80,14 +51,25 @@ if (["hi", "hello", "start", "restart"].includes(text)) {
             next: r[4]
         }));
 
-        // 🔹 CONFIG
         const configObj = {};
-        (config.length > 1 ? config.slice(1) : []).forEach(r => {
-            configObj[r[0]] = r[1];
-        });
+        config.slice(1).forEach(r => configObj[r[0]] = r[1]);
 
-        // 🔹 USER INIT
         if (!users[from]) users[from] = { step: "start" };
+
+        // restart fix
+        if (
+            ["hi", "hello", "start"].includes(text) &&
+            users[from].step === "start"
+        ) {
+            await sendText(from, "Hey 👋 Welcome to IT Monkey!\nPlease enter your full name 😊");
+            return res.sendStatus(200);
+        }
+
+        if (replyId === "start_over") {
+            users[from] = { step: "start" };
+            await sendText(from, "🔁 Restarted\nEnter your name 😊");
+            return res.sendStatus(200);
+        }
 
         let currentStep = users[from].step;
         let stepData = flowData.find(s => s.step === currentStep);
@@ -97,89 +79,76 @@ if (["hi", "hello", "start", "restart"].includes(text)) {
             stepData = flowData.find(s => s.step === "start");
         }
 
-        // 🔹 SAVE INPUT
         if (currentStep === "name") users[from].name = text;
-        if (currentStep === "service") users[from].service = replyId || text;
-        // 🔁 BUTTON RESET
-if (replyId === "start_over") {
-    users[from] = { step: "start" };
-
-    await sendText(
-        from,
-        "Hey 👋 Welcome back!\nPlease enter your full name 😊"
-    );
-
-    return res.sendStatus(200);
-}
+        if (currentStep === "service") users[from].service = (replyId || text || "").toLowerCase().trim();
         if (currentStep === "contact") users[from].sameNumber = replyId || text;
 
-        // 🔹 MESSAGE
-        let msg = stepData.message || "";
-        msg = msg.replace("{{name}}", users[from].name || "");
+        let msg = (stepData.message || "").replace("{{name}}", users[from].name || "");
 
-        // 🔥 TEXT
         if (stepData.type === "text") {
             await sendText(from, msg);
         }
 
-        // 🔥 BUTTON
         if (stepData.type === "button") {
-            let opts = (stepData.options || "").split(",").slice(0, 3);
+
+            let opts = [];
+
+            if (stepData.step === "service") {
+                const uniqueServices = [...new Set(services.slice(1).map(r => r[0]))];
+                opts = uniqueServices;
+            } else {
+                opts = stepData.options
+                    ? stepData.options.split(",").filter(o => o.trim() !== "")
+                    : [];
+            }
+
+            opts.push("start_over");
+
             await sendButtons(from, msg, opts);
         }
 
-        // 🔥 ACTION (MEDIA)
         if (stepData.type === "action") {
+            const selectedService = users[from].service;
 
-            const selectedService = users[from].service?.toLowerCase();
-
-            const filtered = (services.length > 1 ? services.slice(1) : []).filter(r =>
-                r[0]?.toLowerCase() === selectedService
+            const filtered = services.slice(1).filter(r =>
+                r[0]?.toLowerCase().trim() === selectedService
             );
 
-            console.log("MATCHED SERVICES:", filtered);
-
             for (let row of filtered) {
-                const type = row[2];
-                const content = row[3];
-
-                if (type === "image") {
-                    await sendImage(from, content);
+                if (row[2] === "image") {
+                    await sendImage(from, row[3]);
                 } else {
-                    await sendText(from, content);
+                    await sendText(from, row[3]);
                 }
             }
         }
 
-        // 🔹 NEXT STEP
         users[from].step = stepData.next;
 
         let nextStep = flowData.find(s => s.step === users[from].step);
 
         if (nextStep) {
-            let nextMsg = nextStep.message || "";
-            nextMsg = nextMsg.replace("{{name}}", users[from].name || "");
+            let nextMsg = (nextStep.message || "").replace("{{name}}", users[from].name || "");
 
-            if (nextStep.type === "text") {
-                await sendText(from, nextMsg);
-            }
+            if (nextStep.type === "text") await sendText(from, nextMsg);
 
             if (nextStep.type === "button") {
-                let opts = (nextStep.options || "").split(",").slice(0, 3);
+                let opts = nextStep.options
+                    ? nextStep.options.split(",").filter(o => o.trim() !== "")
+                    : [];
+
+                opts.push("start_over");
+
                 await sendButtons(from, nextMsg, opts);
             }
         }
 
-        // 🔥 SAVE + NOTIFY
         if (users[from].step === "end") {
-
             await axios.post(SHEET_URL, {
                 name: users[from].name,
                 phone: from,
                 service: users[from].service,
                 sameNumber: users[from].sameNumber
-            }, {
-                headers: { "Content-Type": "application/json" }
             });
 
             if (configObj.notify === "on") {
@@ -199,7 +168,6 @@ if (replyId === "start_over") {
     res.sendStatus(200);
 });
 
-// 🔹 TEXT
 async function sendText(to, message) {
     await axios.post(API_URL, {
         messaging_product: "whatsapp",
@@ -213,7 +181,6 @@ async function sendText(to, message) {
     });
 }
 
-// 🔹 BUTTONS
 async function sendButtons(to, message, options) {
     const buttons = options.map(opt => ({
         type: "reply",
@@ -240,7 +207,6 @@ async function sendButtons(to, message, options) {
     });
 }
 
-// 🔹 IMAGE
 async function sendImage(to, url) {
     await axios.post(API_URL, {
         messaging_product: "whatsapp",
